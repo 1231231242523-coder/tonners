@@ -1,4 +1,4 @@
-package main
+package eurooffice
 
 import (
 	"encoding/csv"
@@ -44,14 +44,27 @@ type Product struct {
 	ID            string
 }
 
-func main() {
+// Run executes the eurooffice scraper with the given configuration.
+// If outputDir is empty, defaults to "output/eurooffice".
+// If workers is 0, defaults to 5.
+func Run(categoryURL, outputDir string, workers int) error {
+	if categoryURL == "" {
+		categoryURL = baseURL
+	}
+	if outputDir == "" {
+		outputDir = "output/eurooffice"
+	}
+	if workers <= 0 {
+		workers = 5
+	}
+
+	outputPath := outputDir + "/eurooffice-products.csv"
 	s := newScraper()
 
 	fmt.Println("Collecting product links from category pages...")
-	links, pages, err := s.collectProductLinks(baseURL)
+	links, pages, err := s.collectProductLinks(categoryURL)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error listing products: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("error listing products: %w", err)
 	}
 	fmt.Printf("Found %d unique products across %d listing pages\n", len(links), pages)
 
@@ -84,10 +97,10 @@ func main() {
 	wg.Wait()
 
 	if err := writeCSV(outputPath, products); err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing CSV: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("error writing CSV: %w", err)
 	}
 	fmt.Printf("Wrote %d products to %s (%d errors)\n", len(products), outputPath, errCount)
+	return nil
 }
 
 func writeCSV(path string, products []Product) error {
