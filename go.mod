@@ -1,10 +1,10 @@
-module eurooffice-scraper
+module eurooffice
 
-go 1.23.2
+go 1.19
 
-require github.com/PuerkitoBio/goquery v1.10.3
+require github.com/PuerkitoBio/goquery v1.9.2
 
 require (
-	github.com/andybalholm/cascadia v1.3.3 // indirect
-	golang.org/x/net v0.39.0 // indirect
+	github.com/andybalholm/cascadia v1.3.2 // indirect
+	golang.org/x/net v0.24.0 // indirect
 )
