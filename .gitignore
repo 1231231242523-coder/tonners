@@ -1,6 +1,9 @@
 ```
+# Dependencies
+go.sum
+vendor/
+
 # Compiled and build artifacts
-main
 *.o
 *.obj
 *.exe
@@ -9,21 +12,10 @@ main
 *.a
 *.out
 
-# Dependencies
-node_modules/
-venv/
-.venv/
-__pycache__/
-.mypy_cache/
-.pytest_cache/
-target/
-.gradle/
-
 # Logs and temp files
 *.log
 *.tmp
 *.swp
-*.swo
 
 # Environment
 .env
@@ -33,34 +25,11 @@ target/
 # Editors
 .vscode/
 .idea/
+__pycache__/
+*.pyc
 
-# System files
-.DS_Store
-Thumbs.db
-
-# Coverage
-coverage/
-htmlcov/
-.coverage
-
-# Compressed files
-*.zip
-*.gz
-*.tar
-*.tgz
-*.bz2
-*.xz
-*.7z
-*.rar
-*.zst
-*.lz4
-*.lzh
-*.cab
-*.arj
-*.rpm
-*.deb
-*.Z
-*.lz
-*.lzo
+# Build directories
+build/
+dist/
+target/
 ```
-vendor
