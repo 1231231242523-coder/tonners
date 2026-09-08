@@ -1,32 +1,22 @@
 FROM golang:1.21-alpine
 
-# Install playwright dependencies
-RUN apk add --no-cache \
-    nodejs \
-    npm \
-    chromium \
-    nss \
-    freetype \
-    harfbuzz \
-    ca-certificates \
-    ttf-opensans \
-    git
-
-# Install playwright
-RUN npm install -g playwright
-RUN playwright install chromium
-
-# Set environment variables for Playwright
-ENV PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright
-ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser
-
 WORKDIR /app
 
+# Install git for fetching dependencies
+RUN apk add --no-cache git
+
+# Copy go mod files first for better caching
 COPY go.mod go.sum ./
 RUN go mod download
 
-COPY . .
+# Copy source code
+COPY suppliers/officesolution/*.go ./
 
-RUN go build -o scraper .
+# Create output directory
+RUN mkdir -p /app/output/officesolution
 
-CMD ["./scraper"]
+# Build the scraper
+RUN go build -o officesolution-scraper .
+
+# Default command
+CMD ["./officesolution-scraper"]
