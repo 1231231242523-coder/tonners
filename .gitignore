@@ -1,21 +1,23 @@
 ```
-# Binaries
-officesolution-scraper
-
-# Go build artifacts
+# Build artifacts
+build/
+dist/
 *.o
-*.a
-*.so
-*.exe
-*.dll
+*.obj
 *.out
 
 # Dependencies
-vendor/
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.egg-info/
 
-# Logs and temp files
+# Logs and temporary files
 *.log
 *.tmp
+*.swp
+*.swo
 
 # Environment
 .env
@@ -28,13 +30,38 @@ vendor/
 *.swp
 *.swo
 
-# Coverage
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Coverage reports
 coverage/
 htmlcov/
 .coverage
 
-# Build artifacts
-build/
-dist/
-target/
+# Python specific
+*.pyc
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+
+# Compressed files
+*.zip
+*.gz
+*.tar
+*.tgz
+*.bz2
+*.xz
+*.7z
+*.rar
+*.zst
+*.lz4
+*.lzh
+*.cab
+*.arj
+*.rpm
+*.deb
+*.Z
+*.lz
+*.lzo
 ```

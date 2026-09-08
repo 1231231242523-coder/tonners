@@ -16,7 +16,7 @@ COPY suppliers/officesolution/*.go ./
 RUN mkdir -p /app/output/officesolution
 
 # Build the scraper
-RUN go build -o officesolution-scraper .
+RUN go build -o officesolution-scraper . && chmod +x officesolution-scraper
 
 # Default command
 CMD ["./officesolution-scraper"]
