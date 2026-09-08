@@ -5,12 +5,11 @@ WORKDIR /app
 # Install git and build tools
 RUN apk add --no-cache git gcc musl-dev
 
-# Copy go mod files first for better caching
-COPY suppliers/officesolution/go.mod suppliers/officesolution/go.sum ./
-RUN go mod download
-
 # Copy source code
-COPY suppliers/officesolution/*.go ./
+COPY suppliers/officesolution/ ./
+
+# Download dependencies
+RUN go mod download
 
 # Build the binary specifically for linux/amd64 with static linking
 ENV CGO_ENABLED=0
