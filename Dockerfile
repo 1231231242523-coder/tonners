@@ -1,4 +1,4 @@
-FROM golang:1.21-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.21-alpine AS builder
 
 WORKDIR /app
 
@@ -12,13 +12,15 @@ COPY suppliers/officesolution/ ./
 RUN go mod download
 
 # Build the binary specifically for linux/amd64 with static linking
+ARG TARGETOS
+ARG TARGETARCH
 ENV CGO_ENABLED=0
-ENV GOOS=linux
-ENV GOARCH=amd64
+ENV GOOS=$TARGETOS
+ENV GOARCH=$TARGETARCH
 RUN go build -a -installsuffix cgo -o officesolution-scraper .
 
 # Final stage - minimal runtime image
-FROM alpine:latest
+FROM --platform=$TARGETPLATFORM alpine:latest
 
 RUN apk --no-cache add ca-certificates
 

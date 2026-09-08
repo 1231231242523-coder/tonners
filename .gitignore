@@ -1,35 +1,51 @@
 ```
-# Dependencies
-go.sum
-vendor/
+# Docker related
+.dockerignore
+*.dockerapp
 
-# Compiled and build artifacts
-*.o
-*.obj
-*.exe
-*.dll
-*.so
-*.a
-*.out
-
-# Logs and temp files
-*.log
+# Temporary files
 *.tmp
 *.swp
+*.swo
 
-# Environment
+# Logs
+*.log
+
+# Environment files
 .env
 .env.local
 *.env.*
 
-# Editors
+# Dependencies (if any)
+node_modules/
+.venv/
+venv/
+__pycache__/
+.mypy_cache/
+.pytest_cache/
+target/
+.gradle/
+
+# Build artifacts (if any)
+dist/
+build/
+coverage/
+htmlcov/
+*.pyc
+*.class
+*.o
+*.exe
+*.dll
+*.so
+*.a
+*.obj
+*.out
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Editor/IDE files
 .vscode/
 .idea/
-__pycache__/
-*.pyc
-
-# Build directories
-build/
-dist/
-target/
 ```
