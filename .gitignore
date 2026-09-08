@@ -1,0 +1,11 @@
+```
+# Build artifacts
+eurooffice/eurooffice
+# Dependencies
+vendor/
+# Go-specific ignores
+*.mod
+*.sum
+!go.mod
+!go.sum
+```
