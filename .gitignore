@@ -1,49 +1,43 @@
 ```
-# Build artifacts
-build/
-dist/
-*.o
-*.obj
-*.out
+# Docker related
+.dockerignore
+*.dockerignore
 
-# Dependencies
-node_modules/
-.venv/
-venv/
-__pycache__/
-*.egg-info/
-
-# Logs and temporary files
-*.log
+# Temporary files
 *.tmp
 *.swp
 *.swo
 
-# Environment
+# Logs
+*.log
+
+# Environment files
 .env
 .env.local
 *.env.*
 
-# Editors
-.vscode/
-.idea/
-*.swp
-*.swo
+# Dependencies and build artifacts
+node_modules/
+__pycache__/
+*.pyc
+*.class
+*.o
+*.obj
+*.out
+dist/
+build/
+target/
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.coverage
+coverage/
+htmlcov/
 
 # OS generated files
 .DS_Store
 Thumbs.db
-
-# Coverage reports
-coverage/
-htmlcov/
-.coverage
-
-# Python specific
-*.pyc
-__pycache__/
-.pytest_cache/
-.mypy_cache/
 
 # Compressed files
 *.zip
@@ -64,4 +58,12 @@ __pycache__/
 *.Z
 *.lz
 *.lzo
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tar.zst
+
+# Editors
+.vscode/
+.idea/
 ```
