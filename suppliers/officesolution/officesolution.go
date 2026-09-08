@@ -1,9 +1,11 @@
 package officesolution
 
 import (
-	"context"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"regexp"
@@ -11,16 +13,13 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/PuerkitoBio/goquery"
-	"github.com/chromedp/chromedp"
 )
 
 const (
 	defaultBaseURL = "https://officesolution.al/en/11-inks-and-toners-for-printers-and-photocopiers"
 	outputPath     = "output/officesolution/officesolution-products.csv"
 	workers        = 3
-	userAgent      = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+	userAgent      = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
 )
 
 type ProductLink struct {
@@ -135,43 +134,65 @@ func writeCSV(path string, products []Product) error {
 }
 
 type scraper struct {
-	chromeCtx context.Context
-	cancel    context.CancelFunc
+	client *http.Client
 }
 
 func newScraper() *scraper {
-	opts := append(chromedp.DefaultExecAllocatorOptions[:],
-		chromedp.Flag("headless", true),
-		chromedp.Flag("disable-gpu", true),
-		chromedp.Flag("no-sandbox", true),
-		chromedp.Flag("disable-dev-shm-usage", true),
-		chromedp.UserAgent(userAgent),
-	)
-
-	allocCtx, cancel := chromedp.NewExecAllocator(context.Background(), opts...)
-	ctx, _ := chromedp.NewContext(allocCtx)
-
 	return &scraper{
-		chromeCtx: ctx,
-		cancel:    cancel,
+		client: &http.Client{
+			Timeout: 30 * time.Second,
+		},
 	}
 }
 
-func (s *scraper) getDoc(rawURL string) (*goquery.Document, error) {
-	var content string
-	ctx, cancel := chromedp.NewContext(s.chromeCtx)
-	defer cancel()
-
-	err := chromedp.Run(ctx,
-		chromedp.Navigate(rawURL),
-		chromedp.Sleep(3*time.Second), // Wait for Cloudflare challenge
-		chromedp.OuterHTML("html", &content, chromedp.NodeVisible),
-	)
+// fetchJSON makes an XHR-like request to get JSON data from the server
+func (s *scraper) fetchJSON(rawURL string) ([]byte, error) {
+	req, err := http.NewRequest("GET", rawURL, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	return goquery.NewDocumentFromReader(strings.NewReader(content))
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Accept", "application/json, text/javascript, */*; q=0.01")
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	req.Header.Set("Sec-Fetch-Dest", "empty")
+	req.Header.Set("Sec-Fetch-Mode", "cors")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	return io.ReadAll(resp.Body)
+}
+
+// fetchHTML makes a regular request to get HTML content
+func (s *scraper) fetchHTML(rawURL string) ([]byte, error) {
+	req, err := http.NewRequest("GET", rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	return io.ReadAll(resp.Body)
 }
 
 func (s *scraper) collectProductLinks(categoryURL string) ([]ProductLink, int, error) {
@@ -180,15 +201,23 @@ func (s *scraper) collectProductLinks(categoryURL string) ([]ProductLink, int, e
 		return nil, 0, err
 	}
 
-	first, err := listingPageURL(categoryURL, 1)
+	// First, fetch page 1 to determine max pages
+	xhrURL := categoryURL
+	if !strings.Contains(categoryURL, "?") {
+		xhrURL = categoryURL + "?page=1&from-xhr"
+	} else if !strings.Contains(categoryURL, "from-xhr") {
+		xhrURL = categoryURL + "&from-xhr"
+	}
+
+	jsonData, err := s.fetchJSON(xhrURL)
 	if err != nil {
 		return nil, 0, err
 	}
-	doc, err := s.getDoc(first)
+
+	links, maxPage, err := parseListingJSON(jsonData, pageURL)
 	if err != nil {
 		return nil, 0, err
 	}
-	links, maxPage := parseListing(doc, pageURL)
 	if maxPage < 1 {
 		maxPage = 1
 	}
@@ -206,16 +235,28 @@ func (s *scraper) collectProductLinks(categoryURL string) ([]ProductLink, int, e
 	}
 	add(links)
 
+	// Fetch remaining pages via XHR
 	for page := 2; page <= maxPage; page++ {
 		u, err := listingPageURL(categoryURL, page)
 		if err != nil {
 			return all, maxPage, err
 		}
-		doc, err := s.getDoc(u)
+		// Add from-xhr parameter for XHR request
+		if !strings.Contains(u, "from-xhr") {
+			if strings.Contains(u, "?") {
+				u = u + "&from-xhr"
+			} else {
+				u = u + "?from-xhr"
+			}
+		}
+		jsonData, err := s.fetchJSON(u)
 		if err != nil {
 			return all, maxPage, fmt.Errorf("listing page %d: %w", page, err)
 		}
-		batch, _ := parseListing(doc, pageURL)
+		batch, _, err := parseListingJSON(jsonData, pageURL)
+		if err != nil {
+			return all, maxPage, fmt.Errorf("parsing page %d: %w", page, err)
+		}
 		add(batch)
 		time.Sleep(500 * time.Millisecond)
 	}
@@ -223,11 +264,11 @@ func (s *scraper) collectProductLinks(categoryURL string) ([]ProductLink, int, e
 }
 
 func (s *scraper) scrapeProduct(link ProductLink) (Product, error) {
-	doc, err := s.getDoc(link.URL)
+	htmlData, err := s.fetchHTML(link.URL)
 	if err != nil {
 		return Product{}, err
 	}
-	p := parseProductHTML(doc, link.URL)
+	p := parseProductHTML(string(htmlData), link.URL)
 	p.ID = link.ID
 
 	if p.Name == "" && p.Price == "" {
@@ -242,67 +283,84 @@ var (
 	htmlTagRe     = regexp.MustCompile(`<[^>]+>`)
 )
 
-func parseListing(doc *goquery.Document, pageURL *url.URL) ([]ProductLink, int) {
-	maxPage := 1
-	doc.Find("a.page-numbers[data-page-num]").Each(func(_ int, s *goquery.Selection) {
-		n, err := strconv.Atoi(strings.TrimSpace(s.AttrOr("data-page-num", "")))
-		if err == nil && n > maxPage {
-			maxPage = n
-		}
-	})
+// ListingJSON represents the JSON response from the XHR request
+type ListingJSON struct {
+	Products []ProductItem `json:"products"`
+	Pages    int           `json:"pages"`
+}
+
+// ProductItem represents a product in the JSON listing
+type ProductItem struct {
+	URL string `json:"url"`
+	ID  string `json:"id"`
+}
+
+func parseListingJSON(jsonData []byte, pageURL *url.URL) ([]ProductLink, int, error) {
+	var result ListingJSON
+	if err := json.Unmarshal(jsonData, &result); err != nil {
+		// If JSON parsing fails, try parsing as HTML fallback
+		return parseListingHTML(string(jsonData), pageURL), 1, nil
+	}
 
 	seen := make(map[string]struct{})
 	var links []ProductLink
-	doc.Find("article.product-miniature, div.product-miniature").Each(func(_ int, item *goquery.Selection) {
-		href, ok := item.Find("a.product-link, a[href]").Attr("href")
-		if !ok {
-			return
-		}
-		href = strings.TrimSpace(href)
+
+	for _, item := range result.Products {
+		href := strings.TrimSpace(item.URL)
 		if href == "" || strings.Contains(href, "add-to-cart") {
-			return
+			continue
 		}
 		abs := resolveURL(pageURL, href)
 		if abs == "" {
-			return
+			continue
 		}
 		if _, dup := seen[abs]; dup {
-			return
+			continue
 		}
 		seen[abs] = struct{}{}
 
-		id := extractID(href)
+		id := item.ID
+		if id == "" {
+			id = extractID(href)
+		}
 		links = append(links, ProductLink{URL: abs, ID: id})
-	})
-
-	if len(links) == 0 {
-		doc.Find("div.wf-cell[data-post-id], li.product, div.product").Each(func(_ int, item *goquery.Selection) {
-			href, ok := item.Find("h4.entry-title a, h3.product-title a, a.product-link, a[href]").First().Attr("href")
-			if !ok {
-				href, ok = item.Attr("href")
-				if !ok {
-					return
-				}
-			}
-			href = strings.TrimSpace(href)
-			if href == "" || strings.Contains(href, "add-to-cart") {
-				return
-			}
-			abs := resolveURL(pageURL, href)
-			if abs == "" {
-				return
-			}
-			if _, dup := seen[abs]; dup {
-				return
-			}
-			seen[abs] = struct{}{}
-
-			id := extractID(href)
-			links = append(links, ProductLink{URL: abs, ID: id})
-		})
 	}
 
-	return links, maxPage
+	maxPage := result.Pages
+	if maxPage < 1 {
+		maxPage = 1
+	}
+
+	return links, maxPage, nil
+}
+
+func parseListingHTML(content string, pageURL *url.URL) []ProductLink {
+	// Simple regex-based parsing for HTML content
+	// This is a fallback if JSON parsing fails
+	var links []ProductLink
+	seen := make(map[string]struct{})
+
+	// Match product links in HTML
+	re := regexp.MustCompile(`<a[^>]*href=["']([^"']+)["'][^>]*class=["'][^"']*product-link[^"']*["']`)
+	matches := re.FindAllStringSubmatch(content, -1)
+	for _, match := range matches {
+		href := strings.TrimSpace(match[1])
+		if href == "" || strings.Contains(href, "add-to-cart") {
+			continue
+		}
+		abs := resolveURL(pageURL, href)
+		if abs == "" {
+			continue
+		}
+		if _, dup := seen[abs]; dup {
+			continue
+		}
+		seen[abs] = struct{}{}
+		id := extractID(href)
+		links = append(links, ProductLink{URL: abs, ID: id})
+	}
+
+	return links
 }
 
 func extractID(href string) string {
@@ -322,93 +380,65 @@ func extractID(href string) string {
 	return ""
 }
 
-func parseResultCount(doc *goquery.Document) int {
-	text := strings.TrimSpace(doc.Find(".woocommerce-result-count").First().Text())
-	m := resultCountRe.FindStringSubmatch(text)
-	if len(m) < 2 {
-		return 0
-	}
-	n, _ := strconv.Atoi(m[1])
-	return n
-}
-
-func parseProductHTML(doc *goquery.Document, pageURL string) Product {
+func parseProductHTML(htmlContent string, pageURL string) Product {
 	p := Product{URL: pageURL}
 
-	name := strings.TrimSpace(doc.Find("h1.page-title, h1.product-name, h1#product_name").First().Text())
-	if name == "" {
-		name = strings.TrimSpace(doc.Find("h1.entry-title").First().Text())
+	// Extract name using regex
+	nameRe := regexp.MustCompile(`<h1[^>]*class=["'][^"']*(?:page-title|product-name|product_name)[^"']*["'][^>]*>([^<]+)</h1>`)
+	if match := nameRe.FindStringSubmatch(htmlContent); len(match) > 1 {
+		p.Name = strings.TrimSpace(match[1])
 	}
-	p.Name = name
-
-	priceSel := doc.Find("div.product-prices .price, p.price, span.price, .current-price").First()
-	if priceSel.Length() == 0 {
-		priceSel = doc.Find(".product-price .price, .price-box .price").First()
-	}
-
-	if ins := priceSel.Find("ins .woocommerce-Price-amount").First(); ins.Length() > 0 {
-		p.SalePrice, p.Currency = parseAmount(ins)
-		p.Price = p.SalePrice
-	} else if amt := priceSel.Find(".woocommerce-Price-amount").First(); amt.Length() > 0 {
-		p.Price, p.Currency = parseAmount(amt)
-	} else if priceSel.Length() > 0 {
-		priceText := strings.TrimSpace(priceSel.Text())
-		p.Price, p.Currency = parsePriceText(priceText)
-	}
-
-	if del := priceSel.Find("del .woocommerce-Price-amount").First(); del.Length() > 0 {
-		p.OriginalPrice, _ = parseAmount(del)
-	} else if del := priceSel.Find("del, .old-price").First(); del.Length() > 0 {
-		delText := strings.TrimSpace(del.Text())
-		if p.OriginalPrice == "" {
-			p.OriginalPrice, _ = parsePriceText(delText)
+	if p.Name == "" {
+		nameRe = regexp.MustCompile(`<h1[^>]*class=["'][^"']*entry-title[^"']*["'][^>]*>([^<]+)</h1>`)
+		if match := nameRe.FindStringSubmatch(htmlContent); len(match) > 1 {
+			p.Name = strings.TrimSpace(match[1])
 		}
 	}
 
-	p.SKU = strings.TrimSpace(doc.Find(".sku, .reference, .product-reference").First().Text())
-	if strings.HasPrefix(p.SKU, "Reference:") {
-		p.SKU = strings.TrimPrefix(p.SKU, "Reference:")
-		p.SKU = strings.TrimSpace(p.SKU)
+	// Extract price using regex
+	priceRe := regexp.MustCompile(`<[^>]*class=["'][^"']*(?:price|current-price)[^"']*["'][^>]*>([^<]*(?:<[^>]*>[^<]*)*)</[^>]*>`)
+	if match := priceRe.FindStringSubmatch(htmlContent); len(match) > 1 {
+		priceText := htmlTagRe.ReplaceAllString(match[1], "")
+		p.Price, p.Currency = parsePriceText(strings.TrimSpace(priceText))
 	}
 
-	p.ImageURL = strings.TrimSpace(doc.Find(`meta[property="og:image"]`).AttrOr("content", ""))
+	// Extract SKU
+	skuRe := regexp.MustCompile(`<[^>]*class=["'][^"']*(?:sku|reference|product-reference)[^"']*["'][^>]*>([^<]+)</[^>]*>`)
+	if match := skuRe.FindStringSubmatch(htmlContent); len(match) > 1 {
+		p.SKU = strings.TrimSpace(match[1])
+		if strings.HasPrefix(p.SKU, "Reference:") {
+			p.SKU = strings.TrimPrefix(p.SKU, "Reference:")
+			p.SKU = strings.TrimSpace(p.SKU)
+		}
+	}
+
+	// Extract image URL
+	imgRe := regexp.MustCompile(`<meta[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["']`)
+	if match := imgRe.FindStringSubmatch(htmlContent); len(match) > 1 {
+		p.ImageURL = strings.TrimSpace(match[1])
+	}
 	if p.ImageURL == "" {
-		p.ImageURL = strings.TrimSpace(doc.Find(".woocommerce-product-gallery img, #product-images img, .product-cover img").First().AttrOr("src", ""))
+		imgRe = regexp.MustCompile(`<img[^>]*class=["'][^"']*(?:woocommerce-product-gallery|product-cover)[^"']*["'][^>]*src=["']([^"']+)["']`)
+		if match := imgRe.FindStringSubmatch(htmlContent); len(match) > 1 {
+			p.ImageURL = strings.TrimSpace(match[1])
+		}
 	}
 
-	desc := strings.TrimSpace(doc.Find(".woocommerce-product-details__short-description, .product-description-short, .short-description").First().Text())
-	if desc == "" {
-		desc = strings.TrimSpace(doc.Find("#tab-description p, .product-description, #description").First().Text())
+	// Extract description
+	descRe := regexp.MustCompile(`<[^>]*class=["'][^"']*(?:product-description-short|short-description)[^"']*["'][^>]*>([^<]*(?:<[^>]*>[^<]*)*)</[^>]*>`)
+	if match := descRe.FindStringSubmatch(htmlContent); len(match) > 1 {
+		desc := htmlTagRe.ReplaceAllString(match[1], "")
+		p.Description = collapseSpace(strings.TrimSpace(desc))
 	}
-	p.Description = collapseSpace(desc)
 
-	bodyClass := doc.Find("body").AttrOr("class", "")
-	articleClass := doc.Find("article.product, div.product").First().AttrOr("class", "")
-	classes := bodyClass + " " + articleClass
-	switch {
-	case strings.Contains(classes, "outofstock") || strings.Contains(strings.ToLower(doc.Text()), "out of stock"):
+	// Extract stock status
+	if strings.Contains(htmlContent, "outofstock") || strings.Contains(strings.ToLower(htmlContent), "out of stock") {
 		p.InStock = "false"
-	case strings.Contains(classes, "instock") || strings.Contains(strings.ToLower(doc.Text()), "in stock"):
+	} else if strings.Contains(htmlContent, "instock") || strings.Contains(strings.ToLower(htmlContent), "in stock") {
 		p.InStock = "true"
 	}
 
-	if p.InStock == "" {
-		if doc.Find(".available-now, .in-stock").Length() > 0 {
-			p.InStock = "true"
-		} else if doc.Find(".unavailable, .out-of-stock").Length() > 0 {
-			p.InStock = "false"
-		}
-	}
-
 	return p
-}
-
-func parseAmount(s *goquery.Selection) (price, currency string) {
-	currency = strings.TrimSpace(s.Find(".woocommerce-Price-currencySymbol").First().Text())
-	clone := s.Clone()
-	clone.Find(".woocommerce-Price-currencySymbol").Remove()
-	price = normalizePrice(clone.Text())
-	return price, currency
 }
 
 func parsePriceText(raw string) (price, currency string) {
